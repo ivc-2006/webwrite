@@ -42,6 +42,7 @@
       this.fabPos = { bottom: 96, right: 24 };
       this.recordMode = "av";
       this.inkSession = null;
+      this.penFrom = null;
       this.shapeStart = null;
       this.activeShape = null;
       this.activePointerId = null;
@@ -453,7 +454,7 @@
     }
 
     storageKey() {
-      return `webwrite:v5:strokes:${location.hostname}${location.pathname}`;
+      return `webwrite:v6:strokes:${location.hostname}${location.pathname}`;
     }
 
     prefsKey() {
@@ -1505,51 +1506,33 @@
     }
 
     posFromEvent(e) {
-      const pressure = typeof e.pressure === "number" ? e.pressure : 0.5;
       if (this.canvas.width < 1 || this.canvas.height < 1) return null;
-
-      const ow = this.canvas.offsetWidth;
-      const oh = this.canvas.offsetHeight;
-      if (
-        e.target === this.canvas &&
-        ow >= 1 &&
-        oh >= 1 &&
-        Number.isFinite(e.offsetX) &&
-        Number.isFinite(e.offsetY)
-      ) {
-        const x = (e.offsetX / ow) * this.canvas.width;
-        const y = (e.offsetY / oh) * this.canvas.height;
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          return { x, y, pressure };
-        }
-      }
-
       const rect = this.canvas.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
       const x = ((e.clientX - rect.left) / rect.width) * this.canvas.width;
       const y = ((e.clientY - rect.top) / rect.height) * this.canvas.height;
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      return { x, y, pressure };
+      /* Chrome often reports a fake (0,0) inside extension shadow DOM. Drop it. */
+      if (x < 1.5 && y < 1.5 && (e.clientX > 8 || e.clientY > 8)) return null;
+      return { x, y };
     }
 
-    startInkFromPointerDown(pos, time) {
-      if (!this.inkPointerDown || this.inkSession) return;
-      let sx = this.inkPointerDown.x;
-      let sy = this.inkPointerDown.y;
-      let sp = this.inkPointerDown.pressure;
-      const st = this.inkPointerDown.time;
-      const { x, y, pressure } = pos;
-      if (sx * sx + sy * sy < 4 && x * x + y * y >= 4) {
-        sx = x;
-        sy = y;
-        sp = pressure;
-      }
-      this.inkSession = new window.WebWriteInkSession(this.ctx, this.strokeOptions());
-      this.inkSession.start(sx, sy, sp, st);
-      this.inkPointerDown = null;
-      if ((x - sx) * (x - sx) + (y - sy) * (y - sy) > 0.25) {
-        this.inkSession.add(x, y, pressure, time);
-      }
+    paintInkSegment(x0, y0, x1, y1) {
+      if (x0 < 1.5 && y0 < 1.5 && (x1 > 8 || y1 > 8)) return;
+      const opts = this.strokeOptions();
+      const tool = this.effectiveTool();
+      this.ctx.save();
+      const paint = window.WebWriteStroke.applyPaintStyle(this.ctx, opts);
+      const width = tool === "eraser" ? this.eraserWidth : tool === "highlighter" ? Math.max(this.lineWidth, 12) : this.lineWidth;
+      this.ctx.strokeStyle = paint;
+      this.ctx.lineWidth = width;
+      this.ctx.lineCap = "round";
+      this.ctx.lineJoin = "round";
+      this.ctx.beginPath();
+      this.ctx.moveTo(x0, y0);
+      this.ctx.lineTo(x1, y1);
+      this.ctx.stroke();
+      this.ctx.restore();
     }
 
     effectiveTool() {
@@ -1575,7 +1558,8 @@
       }
 
       if (INK_TOOLS.has(tool)) {
-        this.inkPointerDown = { x, y, pressure, time };
+        this.penFrom = { x, y };
+        this.paintInkSegment(x, y, x, y);
       }
     }
 
@@ -1667,15 +1651,15 @@
         return;
       }
 
-      if (this.inkPointerDown) {
-        this.startInkFromPointerDown({ x, y, pressure }, time);
+      if (!this.penFrom) {
+        this.penFrom = { x, y };
+        return;
       }
-      if (this.inkSession) {
-        this.inkSession.add(x, y, pressure, time);
-      }
+      this.paintInkSegment(this.penFrom.x, this.penFrom.y, x, y);
+      this.penFrom = { x, y };
     }
 
-    endStroke(x, y, pressure, time) {
+    endStroke(x, y) {
       if (!this.drawing) return;
       this.drawing = false;
 
@@ -1686,24 +1670,15 @@
           this.activeShape = null;
           this.clearPreview();
         }
-      } else {
-        if (this.inkPointerDown && !this.inkSession && x != null && y != null) {
-          this.inkSession = new window.WebWriteInkSession(this.ctx, this.strokeOptions());
-          this.inkSession.start(x, y, pressure, time);
-        } else if (this.inkSession && x != null && y != null) {
-          const last = this.inkSession.points[this.inkSession.points.length - 1];
-          const dx = x - last.x;
-          const dy = y - last.y;
-          if (dx * dx + dy * dy > 0.25) {
-            this.inkSession.add(x, y, pressure, time);
-          }
+      } else if (this.penFrom && x != null && y != null) {
+        const dx = x - this.penFrom.x;
+        const dy = y - this.penFrom.y;
+        if (dx * dx + dy * dy > 0.25) {
+          this.paintInkSegment(this.penFrom.x, this.penFrom.y, x, y);
         }
-        if (this.inkSession) {
-          this.inkSession.finish();
-          this.inkSession = null;
-        }
-        this.inkPointerDown = null;
       }
+      this.penFrom = null;
+      this.inkSession = null;
 
       this.ctx.globalCompositeOperation = "source-over";
       this.ctx.globalAlpha = 1;
@@ -1711,31 +1686,25 @@
     }
 
     processPointerEvent(e, phase) {
-      const events =
-        phase === "move" && typeof e.getCoalescedEvents === "function"
-          ? e.getCoalescedEvents()
-          : [e];
-
-      for (const ev of events) {
-        const pos = this.posFromEvent(ev);
-        if (!pos) continue;
-        const { x, y, pressure } = pos;
-        const time = ev.timeStamp;
-        if (phase === "down") {
-          this.pushUndoSnapshot();
-          this.drawing = true;
-          this.inkSession = null;
-          this.inkPointerDown = null;
-          this.beginStroke(x, y, pressure, time);
-        } else if (phase === "move") {
-          this.continueStroke(x, y, pressure, time);
-        }
+      const pos = this.posFromEvent(e);
+      if (phase === "down") {
+        this.pushUndoSnapshot();
+        this.drawing = true;
+        this.penFrom = null;
+        this.inkSession = null;
+        this.shapeStart = null;
+        this.activeShape = null;
+        if (pos) this.beginStroke(pos.x, pos.y, 0.5, e.timeStamp);
+        return;
       }
-
+      if (phase === "move") {
+        if (!pos) return;
+        this.continueStroke(pos.x, pos.y, 0.5, e.timeStamp);
+        return;
+      }
       if (phase === "up" || phase === "cancel") {
-        const pos = this.posFromEvent(e);
-        if (pos) this.endStroke(pos.x, pos.y, pos.pressure, e.timeStamp);
-        else this.endStroke(null, null, 0.5, e.timeStamp);
+        if (pos) this.endStroke(pos.x, pos.y);
+        else this.endStroke(null, null);
       }
     }
 

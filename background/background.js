@@ -29,7 +29,18 @@ async function ensureContentAndToggle(tabId, enabled) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content/content.js"],
+        files: [
+          "lib/katex.min.js",
+          "lib/jspdf.umd.min.js",
+          "content/stroke-engine.js",
+          "content/background-layer.js",
+          "content/theme.js",
+          "content/text-tool.js",
+          "content/ink-ocr.js",
+          "content/recorder.js",
+          "content/export.js",
+          "content/content.js",
+        ],
       });
       await chrome.scripting.insertCSS({
         target: { tabId },
@@ -88,6 +99,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ensureContentAndToggle(tabId, Boolean(message.enabled))
       .then((ok) => sendResponse({ ok }))
       .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (message.type === "WEBWRITE_CAPTURE_VISIBLE") {
+    const windowId = sender.tab?.windowId;
+    if (windowId == null) {
+      sendResponse({ ok: false, error: "No active window" });
+      return false;
+    }
+    chrome.tabs.captureVisibleTab(windowId, { format: "png" }, (dataUrl) => {
+      const err = chrome.runtime.lastError;
+      sendResponse({
+        ok: Boolean(dataUrl) && !err,
+        dataUrl: dataUrl || null,
+        error: err?.message,
+      });
+    });
     return true;
   }
 

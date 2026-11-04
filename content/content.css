@@ -1,4 +1,5 @@
-/* Host-page isolation: content script CSS stays minimal; UI lives in shadow DOM. */
+/* Keep host hook minimal — never use `all: initial` (it breaks root layout on YouTube). */
 #webwrite-root {
-  all: initial !important;
+  display: block;
+  pointer-events: none;
 }

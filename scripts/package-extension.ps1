@@ -11,6 +11,7 @@ New-Item -ItemType Directory -Force -Path $staging | Out-Null
 $include = @(
   "manifest.json",
   "LICENSE",
+  "lib",
   "background",
   "content",
   "popup",

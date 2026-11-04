@@ -1,57 +1,52 @@
 # WebWrite
 
-Chrome extension to **draw and write on any website** (YouTube, ChatGPT, news sites, etc.) with a pen, custom colors, adjustable thickness, eraser, highlighter, and undo/redo.
+Chrome extension to **draw and write on any website** with smooth ink, brush pressure, shapes, highlighter, and more.
 
 ## Features
 
-- Full-page transparent overlay — ink stays on top while you draw
-- **Pen**, **Highlighter** (semi-transparent), and **Eraser**
-- Preset colors plus a custom color picker
-- Stroke thickness from 1–48 px
-- **Undo / Redo** (toolbar or **Ctrl+Z** / **Ctrl+Y**)
-- Clear canvas for the current page
-- Drawings persist for the session (per URL) until you close the tab
-- Toggle from the extension popup or **Alt+Shift+D**
-- **Esc** exits drawing mode (page clicks work normally when drawing is off)
+- **Smooth pen** — interpolated strokes with round caps (no jagged segments)
+- **Brush** — stylus pressure + speed taper for natural handwriting
+- **Highlighter**, **Eraser**, **Line**, **Arrow**
+- Hold **Shift** while drawing to snap a straight line with any ink tool
+- Preset colors + custom picker, **thickness** (1–64 px), **opacity**
+- **Undo / Redo**, export **PNG/PDF** (full page or drawings only)
+- Settings remembered across sessions (`chrome.storage.local`)
+- **Sheet backgrounds** — presets + custom; **Sheet** menu contrast follows page/sheet color
+- **Eraser size** — dedicated slider (4–120 px), independent of pen size
+- **Text** — Hand-drawn / Normal / Code fonts; `$x^2$` and `$$\frac{a}{b}$$` for math (KaTeX)
+- **Ink→Text** — drag a box over ink; OCR runs, text appears on canvas (edit inline if needed)
+- **Minimize** — collapse toolbar to a draggable ✎ button; click to expand
+- **Record** — Video + audio, video only, or **audio only** (`.webm` downloads on Stop; **Save rec** re-downloads last)
+- **+ Page** — extends the document; **scroll the website normally** (wheel/trackpad) to reach blank pages below
+- Toggle: popup or **Alt+Shift+D** · exit: **Esc**
 
-## Install (developer / unpacked)
+## Install (unpacked)
 
-1. Open Chrome and go to `chrome://extensions`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked**
-4. Select this folder: `webwrite` (the one containing `manifest.json`)
-5. Open any normal website, click the WebWrite icon, and click **Turn on**
+1. `chrome://extensions` → **Developer mode** → **Load unpacked**
+2. Select the `webwrite` folder (contains `manifest.json`)
+3. Open a site → WebWrite icon → **Turn on**
 
-> Drawing is not available on `chrome://` pages or the Chrome Web Store — that is a browser restriction.
+## Toolbar quick reference
 
-## Usage
+| Tool | Use |
+|------|-----|
+| Pen | Smooth uniform strokes |
+| Brush | Pressure-sensitive (trackpad/stylus) |
+| Highlight | Semi-transparent marker |
+| Line / Arrow | Click start, drag, release |
+| Text | Click to type; pick font style in toolbar |
+| Ink→Text | Box ink, then type styled text (replaces ink in box) |
+| Export | PNG or PDF — **page + drawings** or **drawings only** |
 
-1. Click **Turn on** in the popup (or use **Alt+Shift+D**).
-2. Use the floating toolbar: pick a tool, color, and thickness.
-3. Draw with mouse, trackpad, or touch/stylus where supported.
-4. Click **Exit** or **Turn off** (or **Esc**) to interact with the site again.
+**Export notes:** “Page + drawings” captures the visible tab (website background + your ink). The toolbar is hidden for that screenshot. “Drawings only” exports just the ink layer (transparent PNG/PDF).
 
-## Chrome Web Store package
-
-From the `webwrite` folder:
+## Chrome Web Store zip
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
 ```
 
-This creates `dist/webwrite-chrome.zip` for upload to the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole) (one-time developer registration fee applies).
-
-## Project layout
-
-```
-webwrite/
-  manifest.json
-  background/background.js   # Tab state, keyboard shortcut, re-inject
-  content/content.js         # Canvas overlay + toolbar
-  popup/                     # Enable/disable UI
-  icons/
-  scripts/                   # Icons + store zip helpers
-```
+Output: `dist/webwrite-chrome.zip`
 
 ## License
 

@@ -15,7 +15,8 @@
   ];
 
   const MIN_WIDTH = 1;
-  const MAX_WIDTH = 64;
+  const MAX_WIDTH = 96;
+  const PEN_WIDTHS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 36, 52, 72];
   const MAX_UNDO = 50;
   const MIN_ERASER = 4;
   const MAX_ERASER = 120;
@@ -43,6 +44,10 @@
       this.recordMode = "av";
       this.inkSession = null;
       this.penFrom = null;
+      this.inkPoints = null;
+      this.inkBase = null;
+      this.inkPaintQueued = false;
+      this.gestureListening = false;
       this.shapeStart = null;
       this.activeShape = null;
       this.activePointerId = null;
@@ -125,9 +130,9 @@
       this.katexStylesLoaded = false;
       this.katexStylesLoading = null;
 
-      this.ctx = this.canvas.getContext("2d", { desynchronized: true });
-      this.bgCtx = this.bgCanvas.getContext("2d", { desynchronized: true });
-      this.previewCtx = this.previewCanvas.getContext("2d", { desynchronized: true });
+      this.ctx = this.canvas.getContext("2d", { alpha: true });
+      this.bgCtx = this.bgCanvas.getContext("2d", { alpha: true });
+      this.previewCtx = this.previewCanvas.getContext("2d", { alpha: true });
 
       this.recorder = new window.WebWriteRecorder();
       this.buildToolbar();
@@ -150,6 +155,7 @@
     }
 
     onWindowResize() {
+      if (this.drawing) return;
       const { w } = this.viewportSize();
       if (this.canvas.width !== w) this.resizeDocument(true);
     }
@@ -157,6 +163,7 @@
     updateInkPointerEvents() {
       const allowInk = this.enabled;
       this.canvas.style.pointerEvents = allowInk ? "auto" : "none";
+      this.canvas.style.touchAction = allowInk ? "none" : "auto";
       this.canvas.classList.toggle("active", allowInk);
     }
 
@@ -194,7 +201,7 @@
         }
         canvas {
           pointer-events: none;
-          touch-action: pan-y pinch-zoom;
+          touch-action: none;
         }
         canvas.active {
           pointer-events: auto;
@@ -252,7 +259,17 @@
         }
         .ww-swatch.active { border-color: #fff; box-shadow: 0 0 0 1px #2563eb; }
         .ww-slider { display: flex; align-items: center; gap: 6px; }
-        .ww-slider input[type="range"] { width: 72px; accent-color: #2563eb; }
+        .ww-slider input[type="range"] { width: 140px; accent-color: #2563eb; }
+        .ww-sizes { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+        .ww-size {
+          width: 26px; height: 26px; padding: 0;
+          display: grid; place-items: center;
+          background: rgba(255,255,255,0.1);
+        }
+        .ww-size i {
+          display: block; border-radius: 50%; background: #fff; pointer-events: none;
+        }
+        .ww-size.active { background: #2563eb; }
         .ww-slider span { min-width: 26px; text-align: right; opacity: 0.85; }
         .ww-custom-color { width: 28px; height: 28px; padding: 0; background: transparent; }
         .ww-badge {
@@ -454,7 +471,7 @@
     }
 
     storageKey() {
-      return `webwrite:v7:strokes:${location.hostname}${location.pathname}`;
+      return `webwrite:v8:strokes:${location.hostname}${location.pathname}`;
     }
 
     prefsKey() {
@@ -930,11 +947,30 @@
       this.widthRange.type = "range";
       this.widthRange.min = String(MIN_WIDTH);
       this.widthRange.max = String(MAX_WIDTH);
+      this.widthRange.step = "1";
       this.widthRange.value = String(this.lineWidth);
+      this.widthRange.title = "Pen thickness";
       this.widthRange.addEventListener("input", () => {
-        this.lineWidth = Number(this.widthRange.value);
-        this.widthLabel.textContent = this.widthRange.value;
-        this.savePreferences();
+        this.setPenWidth(Number(this.widthRange.value));
+      });
+
+      this.penSizeButtons = [];
+      const sizesWrap = document.createElement("div");
+      sizesWrap.className = "ww-sizes";
+      sizesWrap.title = "Pen thickness";
+      PEN_WIDTHS.forEach((size) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ww-size";
+        btn.title = `${size}px`;
+        const dot = document.createElement("i");
+        const dotPx = Math.max(2, Math.min(18, Math.round(size * 0.28)));
+        dot.style.width = `${dotPx}px`;
+        dot.style.height = `${dotPx}px`;
+        btn.appendChild(dot);
+        btn.addEventListener("click", () => this.setPenWidth(size));
+        this.penSizeButtons.push({ size, btn });
+        sizesWrap.appendChild(btn);
       });
 
       const widthWrap = document.createElement("div");
@@ -942,7 +978,7 @@
       const penSizeLabel = document.createElement("span");
       penSizeLabel.className = "ww-hint";
       penSizeLabel.textContent = "Pen";
-      widthWrap.append(penSizeLabel, this.widthRange, this.widthLabel);
+      widthWrap.append(penSizeLabel, sizesWrap, this.widthRange, this.widthLabel);
 
       this.eraserWidthLabel = document.createElement("span");
       this.eraserWidthLabel.textContent = String(this.eraserWidth);
@@ -1173,11 +1209,21 @@
       else this.applyFabPosition();
     }
 
-    syncToolbarControls() {
-      if (this.widthRange) {
-        this.widthRange.value = String(this.lineWidth);
-        this.widthLabel.textContent = String(this.lineWidth);
+    setPenWidth(size) {
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(size)));
+      this.lineWidth = next;
+      if (this.widthRange) this.widthRange.value = String(next);
+      if (this.widthLabel) this.widthLabel.textContent = String(next);
+      if (this.penSizeButtons) {
+        this.penSizeButtons.forEach(({ size: preset, btn }) => {
+          btn.classList.toggle("active", preset === next);
+        });
       }
+      this.savePreferences();
+    }
+
+    syncToolbarControls() {
+      if (this.widthRange) this.setPenWidth(this.lineWidth);
       if (this.opacityRange) {
         this.opacityRange.value = String(Math.round(this.opacity * 100));
         this.opacityLabel.textContent = `${this.opacityRange.value}%`;
@@ -1482,6 +1528,9 @@
     setEnabled(on) {
       this.enabled = on;
       this.drawing = false;
+      this.stopGestureListeners();
+      this.inkPoints = null;
+      this.inkBase = null;
       if (on) {
         this.resizeDocument(false);
       }
@@ -1506,23 +1555,63 @@
     }
 
     posFromEvent(e) {
-      if (this.canvas.width < 1 || this.canvas.height < 1) return null;
-      /* Fake shadow-DOM events arrive as client (0,0). Never use them. */
-      if (e.clientX < 2 && e.clientY < 2) return null;
+      if (!e || this.canvas.width < 1 || this.canvas.height < 1) return null;
+      if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return null;
+      /* Fake shadow-DOM events report client (0,0) while the pointer is elsewhere. */
+      if (e.clientX < 1 && e.clientY < 1) return null;
       const rect = this.canvas.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
       const x = ((e.clientX - rect.left) / rect.width) * this.canvas.width;
       const y = ((e.clientY - rect.top) / rect.height) * this.canvas.height;
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      if (x < 2 && y < 2) return null;
+      /* Shadow DOM sometimes emits a fake origin event while the pointer is elsewhere. */
+      if (x < 1 && y < 1 && this.inkPoints && this.inkPoints.length) {
+        const last = this.inkPoints[this.inkPoints.length - 1];
+        const dx = x - last.x;
+        const dy = y - last.y;
+        if (dx * dx + dy * dy > 64) return null;
+      }
       return { x, y };
     }
 
-    paintInkSegment(x0, y0, x1, y1) {
-      if ((x0 < 2 && y0 < 2) || (x1 < 2 && y1 < 2)) return;
+    beginInkStroke(x, y) {
+      this.inkPoints = [{ x, y }];
+      try {
+        this.inkBase = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+      } catch {
+        this.inkBase = null;
+      }
+      this.paintInkPolyline();
+    }
+
+    extendInkStroke(x, y) {
+      if (!this.inkPoints) {
+        this.beginInkStroke(x, y);
+        return;
+      }
+      const last = this.inkPoints[this.inkPoints.length - 1];
+      const dx = x - last.x;
+      const dy = y - last.y;
+      if (dx * dx + dy * dy < 0.35) return;
+      this.inkPoints.push({ x, y });
+      this.scheduleInkPaint();
+    }
+
+    scheduleInkPaint() {
+      if (this.inkPaintQueued) return;
+      this.inkPaintQueued = true;
+      requestAnimationFrame(() => {
+        this.inkPaintQueued = false;
+        if (this.inkPoints && this.inkBase) this.paintInkPolyline();
+      });
+    }
+
+    paintInkPolyline() {
+      const pts = this.inkPoints;
+      if (!pts || !pts.length) return;
+      if (this.inkBase) this.ctx.putImageData(this.inkBase, 0, 0);
       const opts = this.strokeOptions();
       const tool = this.effectiveTool();
-      this.ctx.save();
       const paint = window.WebWriteStroke.applyPaintStyle(this.ctx, opts);
       const width =
         tool === "eraser"
@@ -1535,19 +1624,17 @@
       this.ctx.lineWidth = width;
       this.ctx.lineCap = "round";
       this.ctx.lineJoin = "round";
-      const dx = x1 - x0;
-      const dy = y1 - y0;
-      if (dx * dx + dy * dy < 0.25) {
+      this.ctx.setLineDash([]);
+      if (pts.length === 1) {
         this.ctx.beginPath();
-        this.ctx.arc(x1, y1, width / 2, 0, Math.PI * 2);
+        this.ctx.arc(pts[0].x, pts[0].y, Math.max(0.5, width / 2), 0, Math.PI * 2);
         this.ctx.fill();
-      } else {
-        this.ctx.beginPath();
-        this.ctx.moveTo(x0, y0);
-        this.ctx.lineTo(x1, y1);
-        this.ctx.stroke();
+        return;
       }
-      this.ctx.restore();
+      this.ctx.beginPath();
+      this.ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) this.ctx.lineTo(pts[i].x, pts[i].y);
+      this.ctx.stroke();
     }
 
     effectiveTool() {
@@ -1573,8 +1660,7 @@
       }
 
       if (INK_TOOLS.has(tool)) {
-        this.penFrom = { x, y };
-        this.paintInkSegment(x, y, x, y);
+        this.beginInkStroke(x, y);
       }
     }
 
@@ -1658,7 +1744,7 @@
       this.clearPreview();
     }
 
-    continueStroke(x, y, pressure, time) {
+    continueStroke(x, y) {
       if (!this.drawing) return;
 
       if (this.shapeStart) {
@@ -1666,12 +1752,7 @@
         return;
       }
 
-      if (!this.penFrom) {
-        this.penFrom = { x, y };
-        return;
-      }
-      this.paintInkSegment(this.penFrom.x, this.penFrom.y, x, y);
-      this.penFrom = { x, y };
+      this.extendInkStroke(x, y);
     }
 
     endStroke(x, y) {
@@ -1685,48 +1766,37 @@
           this.activeShape = null;
           this.clearPreview();
         }
-      } else if (this.penFrom && x != null && y != null) {
-        const dx = x - this.penFrom.x;
-        const dy = y - this.penFrom.y;
-        if (dx * dx + dy * dy > 0.25) {
-          this.paintInkSegment(this.penFrom.x, this.penFrom.y, x, y);
-        }
+      } else if (this.inkPoints) {
+        if (x != null && y != null) this.extendInkStroke(x, y);
+        this.paintInkPolyline();
       }
       this.penFrom = null;
+      this.inkPoints = null;
+      this.inkBase = null;
       this.inkSession = null;
 
       this.ctx.globalCompositeOperation = "source-over";
       this.ctx.globalAlpha = 1;
+      this.ctx.setLineDash([]);
       this.saveStrokes();
     }
 
-    processPointerEvent(e, phase) {
-      const pos = this.posFromEvent(e);
-      if (phase === "down") {
-        this.pushUndoSnapshot();
-        this.drawing = true;
-        this.penFrom = null;
-        this.inkSession = null;
-        this.shapeStart = null;
-        this.activeShape = null;
-        if (pos) this.beginStroke(pos.x, pos.y, 0.5, e.timeStamp);
-        return;
-      }
-      if (phase === "move") {
-        const list =
-          typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : null;
-        const events = list && list.length ? list : [e];
-        for (const ev of events) {
-          const p = this.posFromEvent(ev);
-          if (!p) continue;
-          this.continueStroke(p.x, p.y, 0.5, ev.timeStamp);
-        }
-        return;
-      }
-      if (phase === "up" || phase === "cancel") {
-        if (pos) this.endStroke(pos.x, pos.y);
-        else this.endStroke(null, null);
-      }
+    startGestureListeners() {
+      if (this.gestureListening) return;
+      this.gestureListening = true;
+      window.addEventListener("pointermove", this.onGestureMove, true);
+      window.addEventListener("pointerup", this.onGestureEnd, true);
+      window.addEventListener("pointercancel", this.onGestureEnd, true);
+      window.addEventListener("pointerrawupdate", this.onGestureMove, true);
+    }
+
+    stopGestureListeners() {
+      if (!this.gestureListening) return;
+      this.gestureListening = false;
+      window.removeEventListener("pointermove", this.onGestureMove, true);
+      window.removeEventListener("pointerup", this.onGestureEnd, true);
+      window.removeEventListener("pointercancel", this.onGestureEnd, true);
+      window.removeEventListener("pointerrawupdate", this.onGestureMove, true);
     }
 
     bindCanvasEvents() {
@@ -1739,10 +1809,34 @@
         { passive: true },
       );
 
-      const onDown = (e) => {
-        if (!this.enabled || e.button !== 0) return;
+      this.onGestureMove = (e) => {
+        if (!this.drawing || e.pointerId !== this.activePointerId) return;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        this.shiftLine = e.shiftKey;
+        if (e.pointerType === "mouse" && (e.buttons & 1) === 0) {
+          this.onGestureEnd(e);
+          return;
+        }
+        const pos = this.posFromEvent(e);
+        if (!pos) return;
+        this.continueStroke(pos.x, pos.y);
+      };
 
-        e.preventDefault();
+      this.onGestureEnd = (e) => {
+        if (!this.drawing || e.pointerId !== this.activePointerId) return;
+        if (e.type === "pointercancel" && (e.buttons & 1)) return;
+        if (e.cancelable) e.preventDefault();
+        const pos = this.posFromEvent(e);
+        this.endStroke(pos ? pos.x : null, pos ? pos.y : null);
+        this.activePointerId = null;
+        this.stopGestureListeners();
+      };
+
+      const onDown = (e) => {
+        if (!this.enabled || e.button !== 0 || this.drawing) return;
+
+        if (e.cancelable) e.preventDefault();
         e.stopPropagation();
         if (this.tool === TEXT_TOOL) {
           const pos = this.posFromEvent(e);
@@ -1760,39 +1854,20 @@
 
         this.shiftLine = e.shiftKey;
         this.activePointerId = e.pointerId;
-        this.processPointerEvent(e, "down");
-        try {
-          this.canvas.setPointerCapture(e.pointerId);
-        } catch {
-          /* ignore */
-        }
-      };
-
-      const onMove = (e) => {
-        if (!this.enabled || !this.drawing || e.pointerId !== this.activePointerId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        this.shiftLine = e.shiftKey;
-        this.processPointerEvent(e, "move");
-      };
-
-      const onUp = (e) => {
-        if (e.pointerId !== this.activePointerId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        this.processPointerEvent(e, "up");
-        this.activePointerId = null;
-        try {
-          this.canvas.releasePointerCapture(e.pointerId);
-        } catch {
-          /* ignore */
-        }
+        const pos = this.posFromEvent(e);
+        this.pushUndoSnapshot();
+        this.drawing = true;
+        this.penFrom = null;
+        this.inkPoints = null;
+        this.inkBase = null;
+        this.inkSession = null;
+        this.shapeStart = null;
+        this.activeShape = null;
+        this.startGestureListeners();
+        if (pos) this.beginStroke(pos.x, pos.y, 0.5, e.timeStamp);
       };
 
       this.canvas.addEventListener("pointerdown", onDown);
-      this.canvas.addEventListener("pointermove", onMove);
-      this.canvas.addEventListener("pointerup", onUp);
-      this.canvas.addEventListener("pointercancel", onUp);
     }
 
     bindKeyboard() {

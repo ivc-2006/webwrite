@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebWrite</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="../icons/icon48.png" width="28" height="28" alt="" />
+      <div>
+        <h1>WebWrite</h1>
+        <p class="tagline">Draw on any page</p>
+      </div>
+    </header>
+
+    <section class="toggle-row">
+      <span id="status-label">Drawing off</span>
+      <button type="button" id="toggle-btn" class="primary">Turn on</button>
+    </section>
+
+    <p class="hint">
+      Use the toolbar on the page for color, thickness, pen, eraser, and clear.
+      Shortcut: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>
+    </p>
+
+    <p id="error" class="error hidden"></p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

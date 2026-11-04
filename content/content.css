@@ -1,0 +1,4 @@
+/* Host-page isolation: content script CSS stays minimal; UI lives in shadow DOM. */
+#webwrite-root {
+  all: initial !important;
+}

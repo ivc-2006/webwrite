@@ -454,7 +454,7 @@
     }
 
     storageKey() {
-      return `webwrite:v6:strokes:${location.hostname}${location.pathname}`;
+      return `webwrite:v7:strokes:${location.hostname}${location.pathname}`;
     }
 
     prefsKey() {
@@ -1507,31 +1507,46 @@
 
     posFromEvent(e) {
       if (this.canvas.width < 1 || this.canvas.height < 1) return null;
+      /* Fake shadow-DOM events arrive as client (0,0). Never use them. */
+      if (e.clientX < 2 && e.clientY < 2) return null;
       const rect = this.canvas.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return null;
       const x = ((e.clientX - rect.left) / rect.width) * this.canvas.width;
       const y = ((e.clientY - rect.top) / rect.height) * this.canvas.height;
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      /* Chrome often reports a fake (0,0) inside extension shadow DOM. Drop it. */
-      if (x < 1.5 && y < 1.5 && (e.clientX > 8 || e.clientY > 8)) return null;
+      if (x < 2 && y < 2) return null;
       return { x, y };
     }
 
     paintInkSegment(x0, y0, x1, y1) {
-      if (x0 < 1.5 && y0 < 1.5 && (x1 > 8 || y1 > 8)) return;
+      if ((x0 < 2 && y0 < 2) || (x1 < 2 && y1 < 2)) return;
       const opts = this.strokeOptions();
       const tool = this.effectiveTool();
       this.ctx.save();
       const paint = window.WebWriteStroke.applyPaintStyle(this.ctx, opts);
-      const width = tool === "eraser" ? this.eraserWidth : tool === "highlighter" ? Math.max(this.lineWidth, 12) : this.lineWidth;
+      const width =
+        tool === "eraser"
+          ? this.eraserWidth
+          : tool === "highlighter"
+            ? Math.max(this.lineWidth, 12)
+            : this.lineWidth;
       this.ctx.strokeStyle = paint;
+      this.ctx.fillStyle = paint;
       this.ctx.lineWidth = width;
       this.ctx.lineCap = "round";
       this.ctx.lineJoin = "round";
-      this.ctx.beginPath();
-      this.ctx.moveTo(x0, y0);
-      this.ctx.lineTo(x1, y1);
-      this.ctx.stroke();
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      if (dx * dx + dy * dy < 0.25) {
+        this.ctx.beginPath();
+        this.ctx.arc(x1, y1, width / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+      } else {
+        this.ctx.beginPath();
+        this.ctx.moveTo(x0, y0);
+        this.ctx.lineTo(x1, y1);
+        this.ctx.stroke();
+      }
       this.ctx.restore();
     }
 
@@ -1698,8 +1713,14 @@
         return;
       }
       if (phase === "move") {
-        if (!pos) return;
-        this.continueStroke(pos.x, pos.y, 0.5, e.timeStamp);
+        const list =
+          typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : null;
+        const events = list && list.length ? list : [e];
+        for (const ev of events) {
+          const p = this.posFromEvent(ev);
+          if (!p) continue;
+          this.continueStroke(p.x, p.y, 0.5, ev.timeStamp);
+        }
         return;
       }
       if (phase === "up" || phase === "cancel") {
